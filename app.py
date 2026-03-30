@@ -1,6 +1,12 @@
 """
 app.py
-PawPal+ Streamlit UI.
+PawPal+ Streamlit UI — Phase 6 Step 1.
+Reflects all algorithmic features in the UI:
+  - Priority emoji color-coding
+  - Chronological sort toggle
+  - Conflict warnings via st.error / st.warning
+  - Skipped task explanation
+  - Utilization metric
 
 Run with:
     streamlit run app.py
@@ -17,20 +23,31 @@ from pawpal_system import (
     Species,
 )
 
-# ── Page config (must be the FIRST Streamlit call — only call this once) ───────
+# ─────────────────────────────────────────────
+# Page config
+# ─────────────────────────────────────────────
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 
 st.title("🐾 PawPal+")
 st.caption("Smart pet care scheduling.")
 
 # ─────────────────────────────────────────────
-# Session state initialisation
+# Priority color-coding helper
+# ─────────────────────────────────────────────
+PRIORITY_EMOJI = {
+    "HIGH":   "🔴",
+    "MEDIUM": "🟡",
+    "LOW":    "🟢",
+}
+
+# ─────────────────────────────────────────────
+# Session state
 # ─────────────────────────────────────────────
 if "owner" not in st.session_state:
     st.session_state.owner = None
 
 # ─────────────────────────────────────────────
-# Sidebar — Owner setup form
+# Sidebar — Owner setup
 # ─────────────────────────────────────────────
 with st.sidebar:
     st.header("👤 Owner Setup")
@@ -52,7 +69,6 @@ with st.sidebar:
             st.session_state.owner.available_end   = avail_end
         st.success(f"Saved! Hello, {owner_name} 👋")
 
-    # Show registered pets in sidebar for quick reference
     if st.session_state.owner and st.session_state.owner.pets:
         st.divider()
         st.caption("Registered pets")
@@ -99,7 +115,7 @@ with st.form("add_pet_form", clear_on_submit=True):
                     age_years=pet_age,
                 )
                 owner.add_pet(new_pet)
-                st.success(f"Added {new_pet.name} ({species_str}) to your household!")
+                st.success(f"Added {new_pet.name} ({species_str})!")
 
 if owner.pets:
     st.markdown("**Registered pets**")
@@ -156,7 +172,7 @@ else:
                 st.warning("Please enter a task title.")
             else:
                 target_pet = next(p for p in owner.pets if p.name == target_name)
-                new_task = Task(
+                new_task   = Task(
                     title=task_title.strip(),
                     duration_minutes=int(duration),
                     priority=Priority.from_str(priority_str),
@@ -167,6 +183,7 @@ else:
                 target_pet.add_task(new_task)
                 st.success(f"Added '{new_task.title}' to {target_name}!")
 
+    # Show pending tasks with priority color-coding
     for pet in owner.pets:
         pending = pet.pending_tasks()
         if not pending:
@@ -174,11 +191,12 @@ else:
         st.markdown(f"**{pet.name}** — {len(pending)} pending task(s)")
         rows = [
             {
+                "":          PRIORITY_EMOJI[t.priority.name],
                 "Task":      t.title,
                 "Min":       t.duration_minutes,
                 "Priority":  t.priority.name,
                 "Time":      t.preferred_time or "—",
-                "Recurring": "Yes" if t.recurring else "No",
+                "Recurring": "🔁" if t.recurring else "—",
                 "Notes":     t.notes or "—",
             }
             for t in pending
@@ -197,32 +215,43 @@ all_pending = owner.all_pending_tasks()
 if not all_pending:
     st.info("Add at least one task before generating a schedule.")
 else:
+    # Sort mode toggle — surfaces sort_by_time() to the user
+    sort_mode = st.radio(
+        "Display order",
+        ["Priority (default)", "Chronological"],
+        horizontal=True,
+    )
+
     if st.button("⚡ Build Today's Schedule", use_container_width=True):
         scheduler = Scheduler(owner)
         result    = scheduler.build_schedule()
 
-        # ── Metrics row ───────────────────────────────────────────────────
+        # ── Metrics ──────────────────────────────────────────────────────
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Scheduled",   len(result.scheduled))
         col2.metric("Skipped",     len(result.skipped))
         col3.metric("Time used",   f"{result.total_minutes} min")
         col4.metric("Utilization", f"{result.utilization_pct}%")
 
-        # ── Conflict warnings (Phase 4 Step 4) ───────────────────────────
-        # _detect_conflicts() returns strings, never raises — so we can
-        # always display them safely without try/except.
+        # ── Conflict warnings — surfaced via st.error + st.warning ───────
         if result.conflicts:
             st.error("⚠️ Scheduling conflicts detected:")
             for warning in result.conflicts:
                 st.warning(warning)
         else:
-            st.success("✅ No conflicts found.")
+            st.success("✅ No conflicts — schedule is clean.")
 
-        # ── Scheduled tasks ───────────────────────────────────────────────
+        # ── Scheduled tasks with sort toggle ─────────────────────────────
         if result.scheduled:
+            display = (
+                Scheduler.sort_by_time(result.scheduled)
+                if sort_mode == "Chronological"
+                else result.scheduled
+            )
             st.markdown("**Scheduled tasks**")
             rows = [
                 {
+                    "":         PRIORITY_EMOJI[t.priority.name],
                     "Start":    t.scheduled_start.strftime("%I:%M %p"),
                     "End":      t.scheduled_end.strftime("%I:%M %p"),
                     "Task":     t.title,
@@ -230,18 +259,25 @@ else:
                     "Min":      t.duration_minutes,
                     "Notes":    t.notes or "—",
                 }
-                for t in result.scheduled
+                for t in display
             ]
             st.dataframe(rows, use_container_width=True, hide_index=True)
 
-        # ── Skipped tasks ─────────────────────────────────────────────────
+        # ── Skipped tasks with explanation ────────────────────────────────
         if result.skipped:
-            st.warning(f"{len(result.skipped)} task(s) didn't fit in your window:")
+            st.warning(
+                f"{len(result.skipped)} task(s) were skipped because they "
+                f"didn't fit within your {owner.available_start}–"
+                f"{owner.available_end} window:"
+            )
             for t in result.skipped:
-                st.write(f"  • {t.title} ({t.duration_minutes} min, {t.priority.name})")
+                st.write(
+                    f"  {PRIORITY_EMOJI[t.priority.name]} {t.title} "
+                    f"({t.duration_minutes} min, {t.priority.name})"
+                )
 
         # ── Plain-text export ─────────────────────────────────────────────
-        with st.expander("📄 Plain-text summary"):
+        with st.expander("📄 Plain-text summary (copy for README)"):
             st.code(Scheduler.explain(result), language="text")
 
 st.divider()
@@ -250,7 +286,7 @@ st.divider()
 # Section 4 — Mark Tasks Done
 # ─────────────────────────────────────────────
 st.subheader("✅ Mark Tasks Done")
-st.caption("Recurring tasks will automatically generate the next day's occurrence.")
+st.caption("Recurring tasks automatically generate tomorrow's occurrence.")
 
 if not owner.pets:
     st.info("No pets registered yet.")
@@ -274,7 +310,8 @@ else:
             with col_info:
                 recurring_badge = " 🔁" if task.recurring else ""
                 st.write(
-                    f"**[{task.priority.name}]** {task.title}{recurring_badge} "
+                    f"{PRIORITY_EMOJI[task.priority.name]} "
+                    f"**{task.title}**{recurring_badge} "
                     f"— {pet.name}, {task.duration_minutes} min"
                 )
                 if task.notes:
@@ -286,8 +323,7 @@ else:
                     if next_task and next_task.scheduled_start:
                         next_date = next_task.scheduled_start.strftime("%A, %b %d")
                         st.success(
-                            f"✅ '{task.title}' done! "
-                            f"Next occurrence queued for {next_date}."
+                            f"✅ Done! Next '{task.title}' queued for {next_date}."
                         )
                     else:
                         st.success(f"✅ '{task.title}' marked complete.")
