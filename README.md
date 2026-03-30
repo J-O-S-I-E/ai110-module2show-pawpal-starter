@@ -36,6 +36,7 @@ pip install -r requirements.txt
 
 1. Read the scenario carefully and identify requirements and edge cases.
 2. Draft a UML diagram (classes, attributes, methods, relationships).
+    ![alt text](image.png)
 3. Convert UML into Python class stubs (no logic yet).
 4. Implement scheduling logic in small increments.
 5. Add tests to verify key behaviors.
