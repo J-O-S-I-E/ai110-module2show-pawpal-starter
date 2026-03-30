@@ -167,3 +167,38 @@ busy_owner.add_pet(tiny_pet)
 
 r2 = Scheduler(busy_owner).build_schedule(date=datetime(2025, 6, 1))
 print(Scheduler.explain(r2))
+
+print("\n--- Conflict Detection Test ---")
+from datetime import datetime
+
+# Force two tasks to overlap manually
+t1 = Task("Walk A",  duration_minutes=30, priority=Priority.HIGH)
+t2 = Task("Walk B",  duration_minutes=30, priority=Priority.HIGH)
+
+# t1 runs 09:00 → 09:30
+# t2 runs 09:15 → 09:45  (overlaps t1 by 15 minutes)
+t1.scheduled_start = datetime(2025, 6, 1, 9, 0)
+t2.scheduled_start = datetime(2025, 6, 1, 9, 15)
+
+conflicts = Scheduler._detect_conflicts([t1, t2])
+
+if conflicts:
+    for c in conflicts:
+        print(f"  {c}")
+else:
+    print("  No conflicts found.")
+
+# Confirm non-overlapping tasks produce no warnings
+t3 = Task("Feed",    duration_minutes=10, priority=Priority.HIGH)
+t3.scheduled_start = datetime(2025, 6, 1, 9, 30)  # starts exactly when t1 ends
+
+no_conflicts = Scheduler._detect_conflicts([t1, t3])
+print(f"\n  t1 + t3 (back-to-back, no overlap): {len(no_conflicts)} conflicts ✅")
+```
+
+Expected output:
+```
+--- Conflict Detection Test ---
+  ⚠️  Overlap: 'Walk A' and 'Walk B'
+
+  t1 + t3 (back-to-back, no overlap): 0 conflicts ✅

@@ -201,13 +201,26 @@ else:
         scheduler = Scheduler(owner)
         result    = scheduler.build_schedule()
 
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Scheduled", len(result.scheduled))
-        col2.metric("Skipped",   len(result.skipped))
-        col3.metric("Time used", f"{result.total_minutes} min")
+        # ── Metrics row ───────────────────────────────────────────────────
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Scheduled",   len(result.scheduled))
+        col2.metric("Skipped",     len(result.skipped))
+        col3.metric("Time used",   f"{result.total_minutes} min")
+        col4.metric("Utilization", f"{result.utilization_pct}%")
 
+        # ── Conflict warnings (Phase 4 Step 4) ───────────────────────────
+        # _detect_conflicts() returns strings, never raises — so we can
+        # always display them safely without try/except.
+        if result.conflicts:
+            st.error("⚠️ Scheduling conflicts detected:")
+            for warning in result.conflicts:
+                st.warning(warning)
+        else:
+            st.success("✅ No conflicts found.")
+
+        # ── Scheduled tasks ───────────────────────────────────────────────
         if result.scheduled:
-            st.markdown("**✅ Scheduled**")
+            st.markdown("**Scheduled tasks**")
             rows = [
                 {
                     "Start":    t.scheduled_start.strftime("%I:%M %p"),
@@ -215,16 +228,19 @@ else:
                     "Task":     t.title,
                     "Priority": t.priority.name,
                     "Min":      t.duration_minutes,
+                    "Notes":    t.notes or "—",
                 }
                 for t in result.scheduled
             ]
             st.dataframe(rows, use_container_width=True, hide_index=True)
 
+        # ── Skipped tasks ─────────────────────────────────────────────────
         if result.skipped:
             st.warning(f"{len(result.skipped)} task(s) didn't fit in your window:")
             for t in result.skipped:
                 st.write(f"  • {t.title} ({t.duration_minutes} min, {t.priority.name})")
 
+        # ── Plain-text export ─────────────────────────────────────────────
         with st.expander("📄 Plain-text summary"):
             st.code(Scheduler.explain(result), language="text")
 
