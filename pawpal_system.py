@@ -463,3 +463,255 @@ class Scheduler:
             f"({result.utilization_pct}%)"
         )
         return "\n".join(lines)
+
+"""
+app.py
+PawPal+ Streamlit UI — Phase 3 Step 3.
+All three forms are now wired to real backend class methods.
+
+Run with:
+    streamlit run app.py
+"""
+
+import streamlit as st
+from pawpal_system import (
+    Owner,
+    Pet,
+    Task,
+    Scheduler,
+    Priority,
+    Species,
+)
+
+# ── Page config ────────────────────────────────────────────────────────────────
+st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
+
+st.title("🐾 PawPal+")
+st.caption("Smart pet care scheduling.")
+
+# ─────────────────────────────────────────────
+# Session state initialisation
+# ─────────────────────────────────────────────
+if "owner" not in st.session_state:
+    st.session_state.owner = None
+
+# ─────────────────────────────────────────────
+# Sidebar — Owner setup
+# ─────────────────────────────────────────────
+with st.sidebar:
+    st.header("👤 Owner Setup")
+
+    owner_name  = st.text_input("Your name",               value="Jordan")
+    avail_start = st.text_input("Available from (HH:MM)",  value="08:00")
+    avail_end   = st.text_input("Available until (HH:MM)", value="20:00")
+
+    if st.button("💾 Save Owner", use_container_width=True):
+        if st.session_state.owner is None:
+            # First save — create a brand new Owner object
+            # and store it in session state
+            st.session_state.owner = Owner(
+                name=owner_name,
+                available_start=avail_start,
+                available_end=avail_end,
+            )
+        else:
+            # Subsequent saves — update fields in place
+            # so any pets already added are preserved
+            st.session_state.owner.name            = owner_name
+            st.session_state.owner.available_start = avail_start
+            st.session_state.owner.available_end   = avail_end
+        st.success(f"Saved! Hello, {owner_name} 👋")
+
+    # Show registered pets in the sidebar for quick reference
+    if st.session_state.owner and st.session_state.owner.pets:
+        st.divider()
+        st.caption("Registered pets")
+        for p in st.session_state.owner.pets:
+            st.write(f"• {p.name} ({p.species.value}, {p.age_years}y)")
+
+# ─────────────────────────────────────────────
+# Guard
+# ─────────────────────────────────────────────
+if st.session_state.owner is None:
+    st.info("👈 Fill in your name and availability in the sidebar, then click Save Owner.")
+    st.stop()
+
+owner: Owner = st.session_state.owner
+
+# ─────────────────────────────────────────────
+# Section 1 — Add a Pet
+# ─────────────────────────────────────────────
+st.subheader("🐾 Add a Pet")
+
+# st.form batches all inputs so the script only re-runs
+# once when the submit button is clicked — not on every keystroke
+with st.form("add_pet_form", clear_on_submit=True):
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        pet_name    = st.text_input("Pet name", placeholder="Mochi")
+    with col2:
+        species_str = st.selectbox("Species", ["dog", "cat", "other"])
+    with col3:
+        pet_age     = st.number_input("Age (years)", min_value=0.0,
+                                       max_value=30.0, value=1.0, step=0.5)
+
+    submitted = st.form_submit_button("➕ Add Pet", use_container_width=True)
+
+    if submitted:
+        if not pet_name.strip():
+            st.warning("Please enter a pet name.")
+        else:
+            # Check the pet doesn't already exist
+            existing_names = [p.name.lower() for p in owner.pets]
+            if pet_name.strip().lower() in existing_names:
+                st.warning(f"'{pet_name}' is already registered.")
+            else:
+                # ── Calls Owner.add_pet() and Pet() constructor ────────────
+                new_pet = Pet(
+                    name=pet_name.strip(),
+                    species=Species(species_str),
+                    age_years=pet_age,
+                )
+                owner.add_pet(new_pet)
+                # ──────────────────────────────────────────────────────────
+                st.success(f"Added {new_pet.name} ({species_str}) to your household!")
+
+# Show all registered pets
+if owner.pets:
+    st.markdown("**Registered pets**")
+    rows = [
+        {
+            "Name":    p.name,
+            "Species": p.species.value,
+            "Age":     f"{p.age_years}y",
+            "Tasks":   len(p.tasks),
+            "Pending": len(p.pending_tasks()),
+        }
+        for p in owner.pets
+    ]
+    st.dataframe(rows, use_container_width=True, hide_index=True)
+else:
+    st.info("No pets yet. Add one above.")
+
+st.divider()
+
+# ─────────────────────────────────────────────
+# Section 2 — Add a Task
+# ─────────────────────────────────────────────
+st.subheader("📋 Add a Task")
+
+if not owner.pets:
+    st.warning("Add a pet first before adding tasks.")
+else:
+    with st.form("add_task_form", clear_on_submit=True):
+        # Which pet does this task belong to?
+        pet_names   = [p.name for p in owner.pets]
+        target_name = st.selectbox("Assign to pet", pet_names)
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            task_title   = st.text_input("Task title", placeholder="Morning walk")
+        with col2:
+            duration     = st.number_input("Duration (min)", min_value=1,
+                                            max_value=480, value=30)
+        with col3:
+            priority_str = st.selectbox("Priority", ["high", "medium", "low"])
+
+        col4, col5 = st.columns(2)
+        with col4:
+            pref_time = st.selectbox(
+                "Preferred time", ["(none)", "morning", "afternoon", "evening"]
+            )
+        with col5:
+            recurring = st.checkbox("Recurring (repeats daily)")
+
+        notes     = st.text_input("Notes (optional)", placeholder="e.g. Give with food")
+        submitted = st.form_submit_button("➕ Add Task", use_container_width=True)
+
+        if submitted:
+            if not task_title.strip():
+                st.warning("Please enter a task title.")
+            else:
+                # Find the target Pet object from owner.pets
+                target_pet = next(p for p in owner.pets if p.name == target_name)
+
+                # ── Calls Task() constructor and Pet.add_task() ────────────
+                new_task = Task(
+                    title=task_title.strip(),
+                    duration_minutes=int(duration),
+                    priority=Priority.from_str(priority_str),
+                    preferred_time=None if pref_time == "(none)" else pref_time,
+                    recurring=recurring,
+                    notes=notes.strip(),
+                )
+                target_pet.add_task(new_task)
+                # ──────────────────────────────────────────────────────────
+                st.success(f"Added '{new_task.title}' to {target_name}!")
+
+    # Show pending tasks for each pet
+    for pet in owner.pets:
+        pending = pet.pending_tasks()
+        if not pending:
+            continue
+        st.markdown(f"**{pet.name}** — {len(pending)} pending task(s)")
+        rows = [
+            {
+                "Task":     t.title,
+                "Min":      t.duration_minutes,
+                "Priority": t.priority.name,
+                "Time":     t.preferred_time or "—",
+                "Recurring": "Yes" if t.recurring else "No",
+                "Notes":    t.notes or "—",
+            }
+            for t in pending
+        ]
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+
+st.divider()
+
+# ─────────────────────────────────────────────
+# Section 3 — Generate Schedule
+# ─────────────────────────────────────────────
+st.subheader("🗓️ Generate Schedule")
+
+all_pending = owner.all_pending_tasks()
+
+if not all_pending:
+    st.info("Add at least one task before generating a schedule.")
+else:
+    if st.button("⚡ Build Today's Schedule", use_container_width=True):
+        # ── Calls Scheduler.build_schedule() ──────────────────────────────
+        scheduler = Scheduler(owner)
+        result    = scheduler.build_schedule()
+        # ──────────────────────────────────────────────────────────────────
+
+        # Metrics row
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Scheduled",   len(result.scheduled))
+        col2.metric("Skipped",     len(result.skipped))
+        col3.metric("Time used",   f"{result.total_minutes} min")
+
+        # Scheduled tasks table
+        if result.scheduled:
+            st.markdown("**✅ Scheduled**")
+            rows = [
+                {
+                    "Start":    t.scheduled_start.strftime("%I:%M %p"),
+                    "End":      t.scheduled_end.strftime("%I:%M %p"),
+                    "Task":     t.title,
+                    "Priority": t.priority.name,
+                    "Min":      t.duration_minutes,
+                }
+                for t in result.scheduled
+            ]
+            st.dataframe(rows, use_container_width=True, hide_index=True)
+
+        # Skipped tasks
+        if result.skipped:
+            st.warning(f"{len(result.skipped)} task(s) didn't fit in your window:")
+            for t in result.skipped:
+                st.write(f"  • {t.title} ({t.duration_minutes} min, {t.priority.name})")
+
+        # Plain text summary
+        with st.expander("📄 Plain-text summary"):
+            st.code(Scheduler.explain(result), language="text")
